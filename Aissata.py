@@ -44,7 +44,7 @@ def load_selected_timeseries(file_name: str, product_classes: list[str]) -> dict
     # Sort by date
     df = df.sort_values("Month")
 
-    # Group and extract time series
+    # Group and extract time series with product class as name
     time_series_dict = {
     product_class: group.set_index("Month")["sales_volume"].sort_index().rename(product_class)
     for product_class, group in df.groupby("product_class")
