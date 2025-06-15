@@ -21,8 +21,8 @@ def get_user_inputs():
 
     # Get list of time series IDs to forecast
     product_classes_input = input("Enter time series IDs to forecast, separated by commas: ").strip()
-    #if product_classes_input.len() > 5:
-     #   raise ValueError("Too many product classes. Input up to 5 product classes.")
+    if len(product_classes_input) > 5 | len(product_classes_input) == 0:
+        raise ValueError("Incorrect many product classes. Input 1 up to 5 product classes.")
     product_classes_to_forecast = [id_.strip() for id_ in product_classes_input.split(",") if id_.strip()]
 
     # Get metric and validate
