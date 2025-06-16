@@ -15,8 +15,6 @@ from statsforecast.models import (
     SeasonalNaive
 )
 
-from plot_forecasting import run_all_plots # Plotting script
-
 model_registry = {
     "AutoARIMA": AutoARIMA(),
     "AutoETS": AutoETS(),
