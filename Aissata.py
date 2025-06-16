@@ -287,13 +287,17 @@ file_name, product_classes_to_forecast, metric = get_user_inputs()
 print(f"\nInputs received:\nFile: {file_name}\nProduct Classes to Forecast: {product_classes_to_forecast}\nMetric: {metric}")
 
 ts_df = load_selected_timeseries(file_name, product_classes_to_forecast)
-print(ts_df.head())
+print("Loaded timeseries:\nS", ts_df.head(), "\n")
 
-#Run cross validation
-cv_results = run_cross_validation(ts_df, metric)
+# Get length of shortest time series
+ts_min_length = ts_df.groupby("unique_id").size().min()
+print("Shortest time series length:", ts_min_length)
+
+# Run cross validation and calculate accuracy metrics
+cv_results = run_cross_validation(ts_df, metric, ts_min_length)
 print(cv_results)
 
-#Print accuracy metrics
+# Print accuracy metrics
 if not cv_results.empty:
     accuracy_df = calculate_accuracy_metrics(cv_results, metric)
     print("Per-Series, Per-Model Accuracy:")
@@ -309,11 +313,11 @@ else:
 #print("\nAverage accuracy across all series:")
 #print(avg_accuracy)
 
-#Select best models:
+# Select best models:
 accuracy_df = accuracy_df.set_index("unique_id") # set unique_id as index
 best_models_df = select_best_models(accuracy_df)
 
-#Run forecast for best models:
+# Run forecast for best models:
 forecast_df = forecast_best_models(ts_df, best_models_df, accuracy_df, horizon=12)
 
 
