@@ -417,9 +417,18 @@ if __name__ == "__main__":
         ts_df, best_models_df, metric=metric, horizon=12
     )
 
+    # Step 8: Plot forecasts
+    plot_forecasts(ts_df, forecast_df, best_models_df, metric)
+
+    #Step 10: export tables
     summary_df = create_summary_table(ts_df, best_models_df, accuracy_df)
     print("\nSummary Table:")
     print(summary_df)
+    
+    with pd.ExcelWriter('output.xlsx') as writer:
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        cv_results.to_excel(writer, sheet_name='Cross_Validation', index=False)
+        accuracy_df.to_excel(writer, sheet_name='Accuracy', index=False)
+        best_models_df.to_excel(writer, sheet_name='Best_Models', index=False)
+        forecast_df.to_excel(writer, sheet_name='Forecasts', index=False)
 
-    # Step 8: Plot forecasts
-    plot_forecasts(ts_df, forecast_df, best_models_df, metric)
