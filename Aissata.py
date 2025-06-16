@@ -22,7 +22,6 @@ def get_user_inputs():
     product_classes_input = input("Enter time series IDs to forecast, separated by commas: ").strip()
     # Split input into list of product class IDs
     product_classes_to_forecast = [id_.strip() for id_ in product_classes_input.split(",") if id_.strip()]
-
     # Validate number of product classes
     if len(product_classes_to_forecast) == 0 or len(product_classes_to_forecast) > 5:
         raise ValueError("Incorrect number of product classes. Input 1 up to 5 product classes.")
@@ -52,38 +51,33 @@ def load_selected_timeseries(file_name: str, product_classes: list[str]) -> pd.D
     return formatted_df
 
 
-def check_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold: float = 0.5) -> str:
-    """
-    Determines if a time series DataFrame has high or low seasonality.
+from statsmodels.tsa.seasonal import STL
 
-    Args:
-        ts_df (pd.DataFrame): DataFrame with columns ['unique_id', 'ds', 'y'].
-        freq (int): Number of periods in a season.
-        threshold (float): Strength threshold to label "high" or "low".
+def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold: float = 0.4) -> pd.Series:
+    """
+    Quantifies the strength of seasonality and residual variability in a time series.
 
     Returns:
-        str: "high" or "low" seasonality.
+        pd.Series with 'strength_seasonality' and 'residual_variability'
     """
     ts = ts_df.set_index("ds")["y"]
-    inferred_freq = pd.infer_freq(ts.index)
-
-    if inferred_freq is None or len(ts.dropna()) < 2 * freq:
-        return "low"
-
-    ts = ts.asfreq(inferred_freq)
+    ts = ts.asfreq("MS")  # Ensure frequency is monthly
 
     try:
-        decomposition = seasonal_decompose(ts, model='additive', period=freq, extrapolate_trend='freq')
-        resid = decomposition.resid.dropna()
-        seasonal = decomposition.seasonal.loc[resid.index]
-        var_resid = np.var(resid)
-        var_combined = np.var(resid + seasonal)
-        if var_combined == 0:
-            return "low"
-        strength = 1 - (var_resid / var_combined)
-        return "high" if strength >= threshold else "low"
-    except Exception:
-        return "low"
+        stl = STL(ts, period=freq, robust=True)
+        result = stl.fit()
+        fs = max(0, 1 - np.var(result.resid) / np.var(result.resid + result.seasonal))
+        rv = np.std(result.resid / ts.mean())
+        return pd.Series({
+            "strength_seasonality": round(fs, 2),
+            "residual_variability": round(rv, 2)
+        })
+    except Exception as e:
+        return pd.Series({
+            "strength_seasonality": 0.0,
+            "residual_variability": np.nan
+        })
+
 
 
 def select_category(ts_df: pd.DataFrame) -> str:
@@ -99,11 +93,24 @@ def select_category(ts_df: pd.DataFrame) -> str:
     y = ts_df["y"]
     if len(y) < 48:
         return "Category 1"
-    elif check_seasonality_strength(ts_df) == "high" and (y == 0).any():
+    
+    result = quantify_seasonality_strength(ts_df, freq=12)
+    seasonality_scores = ts_df.groupby("unique_id").apply(
+        lambda x: quantify_seasonality_strength(x, freq=12)
+    ).reset_index()
+
+    print(seasonality_scores)
+
+    strength = result["strength_seasonality"]
+
+    has_zeros = (y == 0).any()
+    strong_seasonality = strength >= 0.5
+
+    if strong_seasonality and has_zeros:
         return "Category 2"
-    elif check_seasonality_strength(ts_df) == "high" and (y > 0).all():
+    elif strong_seasonality and not has_zeros:
         return "Category 3"
-    elif check_seasonality_strength(ts_df) == "low" and (y == 0).any():
+    elif not strong_seasonality and has_zeros:
         return "Category 4"
     else:
         return "Category 5"
@@ -201,7 +208,6 @@ def select_best_models(accuracy_df: pd.DataFrame) -> pd.DataFrame:
     return best_df
 
 
-
 def forecast_best_models(
     ts_df: pd.DataFrame,
     best_models_df: pd.DataFrame,
@@ -293,7 +299,10 @@ print("Loaded timeseries:\nS", ts_df.head(), "\n")
 
 # Get length of shortest time series
 ts_min_length = ts_df.groupby("unique_id").size().min()
-print("Shortest time series length:", ts_min_length)
+if ts_min_length < 48:
+    print("Shortest time series length:", ts_min_length)
+else:
+    ts_min_length == 48
 
 # Run cross validation and calculate accuracy metrics
 cv_results = run_cross_validation(ts_df, metric, ts_min_length)
