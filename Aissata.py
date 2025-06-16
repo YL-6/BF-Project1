@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
-import warnings
-import utilsforecast.losses as ufl
+import warnings #?
+import utilsforecast.losses as ufl #?
 
 from statsforecast import StatsForecast
 from statsforecast.models import (
@@ -12,7 +12,7 @@ from statsforecast.models import (
     RandomWalkWithDrift,
     SeasonalNaive
 )
-from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.seasonal import seasonal_decompose #?
 
 def get_user_inputs():
     # Get file name
@@ -20,9 +20,12 @@ def get_user_inputs():
 
     # Get list of time series IDs to forecast
     product_classes_input = input("Enter time series IDs to forecast, separated by commas: ").strip()
-    if len(product_classes_input) > 5 | len(product_classes_input) == 0:
-        raise ValueError("Incorrect many product classes. Input 1 up to 5 product classes.")
+    # Split input into list of product class IDs
     product_classes_to_forecast = [id_.strip() for id_ in product_classes_input.split(",") if id_.strip()]
+
+    # Validate number of product classes
+    if len(product_classes_to_forecast) == 0 or len(product_classes_to_forecast) > 5:
+        raise ValueError("Incorrect number of product classes. Input 1 up to 5 product classes.")
 
     # Get metric and validate
     metric = input("Enter the metric ('mape' or 'mse'): ").strip().lower()
@@ -203,6 +206,7 @@ def forecast_best_models(
     ts_df: pd.DataFrame,
     best_models_df: pd.DataFrame,
     accuracy_df: pd.DataFrame,
+    metric: str,
     horizon: int = 12,
     output_path: str = "final_forecasts.csv"
 ) -> pd.DataFrame:
@@ -316,6 +320,6 @@ accuracy_df = accuracy_df.set_index("unique_id") # set unique_id as index
 best_models_df = select_best_models(accuracy_df)
 
 # Run forecast for best models:
-forecast_df = forecast_best_models(ts_df, best_models_df, accuracy_df, horizon=12)
+forecast_df = forecast_best_models(ts_df, best_models_df, accuracy_df, metric=metric, horizon=12)
 
 
