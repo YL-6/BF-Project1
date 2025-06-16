@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import utilsforecast.losses as ufl #?
+import utilsforecast.losses as ufl
 import os # To create directory with plots
 import warnings
 import matplotlib.pyplot as plt
@@ -21,8 +21,8 @@ from statsforecast.models import (
 model_registry = {
     "AutoARIMA": AutoARIMA(), # Can handle seasonality, some types of trends and autoregression. If high seasonality, SARIMA should be used instead.
     "AutoETS": AutoETS(), # Handles seasonality and trends well. Not good with intermittent demand (e.g., lots of zeros), doesn't handle exogenous variables, and can struggle with highly non-linear series.
-    "HistoricAverage": HistoricAverage(), # ideal for Time series with no trend, no seasonality. The mean model is however highly sensitive to outliers.
-    "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"), # To be used if there is high seasonality.
+    "HistoricAverage": HistoricAverage(), # ideal for Time series with no trend, no seasonality. However highly sensitive to outliers.
+    "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"), # To be used instead of ARIMA if there is high seasonality.
     "Naive": Naive(), # Can be used for time series without seasonality and trend.
     "RandomWalkWithDrift": RandomWalkWithDrift(), # Ideal to model linear trends, but not seasonality. Sensitive to training window, i.e. chosen first and last observation.
     "SeasonalNaive": SeasonalNaive(season_length=12), # Applicable if high seasonality and no trend. Replicate last value in previous season, so highly sensitive to outliers.
