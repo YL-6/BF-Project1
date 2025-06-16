@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
-import warnings #?
 import utilsforecast.losses as ufl #?
-
+import os # To create directory with plots
+import matplotlib.pyplot as plt
+from statsmodels.tsa.seasonal import STL
 from statsforecast import StatsForecast
 from statsforecast.models import (
     AutoARIMA,
@@ -12,7 +13,29 @@ from statsforecast.models import (
     RandomWalkWithDrift,
     SeasonalNaive
 )
-from statsmodels.tsa.seasonal import seasonal_decompose #?
+
+from plot_forecasting import run_all_plots # Plotting script
+
+model_registry = {
+    "ARIMA": AutoARIMA(),
+    "ETS": AutoETS(),
+    "HistoricAverage": HistoricAverage(),
+    "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"),
+    "Naive": Naive(),
+    "RandomWalkWithDrift": RandomWalkWithDrift(),
+    "SeasonalNaive": SeasonalNaive(season_length=12),
+}
+
+categories = {
+    'Category 1': ["Naive", "RandomWalkWithDrift"],
+    'Category 2': ["Naive", "SeasonalNaive", "ETS"],
+    'Category 3': ["Naive", "SARIMA", "SeasonalNaive", "ETS"],
+    'Category 4': ["Naive", "ARIMA", "RandomWalkWithDrift", "HistoricAverage"],
+    'Category 5': ["Naive", "ARIMA", "HistoricAverage"]
+}
+
+
+#--------------------------------------------------------
 
 def get_user_inputs():
     # Get file name
@@ -36,24 +59,35 @@ def get_user_inputs():
 
 def load_selected_timeseries(file_name: str, product_classes: list[str]) -> pd.DataFrame:
     df = pd.read_csv(file_name)
+
+    # Drop rows with missing critical columns
     df.dropna(subset=["product_class", "Month", "sales_volume"], inplace=True)
+
+    # Convert Month to datetime; drop rows with invalid dates
     df["Month"] = pd.to_datetime(df["Month"], errors="coerce")
     df.dropna(subset=["Month"], inplace=True)
+
+    # Filter for requested product classes
     df = df[df["product_class"].isin(product_classes)]
+
+    # Convert sales_volume to numeric; drop rows where conversion failed
+    df["sales_volume"] = pd.to_numeric(df["sales_volume"], errors="coerce")
+    df.dropna(subset=["sales_volume"], inplace=True)
+
+    # Sort data by Month (date)
     df = df.sort_values("Month")
 
+    # Rename columns and select the needed ones
     formatted_df = df.rename(columns={
         "product_class": "unique_id",
         "Month": "ds",
         "sales_volume": "y"
-    })[["unique_id", "ds", "y"]].sort_values(["unique_id", "ds"])
+    })[["unique_id", "ds", "y"]].sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
     return formatted_df
 
 
-from statsmodels.tsa.seasonal import STL
-
-def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold: float = 0.4) -> pd.Series:
+def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold: float = 0.5) -> pd.Series:
     """
     Quantifies the strength of seasonality and residual variability in a time series.
 
@@ -79,7 +113,6 @@ def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold
         })
 
 
-
 def select_category(ts_df: pd.DataFrame) -> str:
     """
     Assigns a forecast category to a time series DataFrame.
@@ -95,12 +128,6 @@ def select_category(ts_df: pd.DataFrame) -> str:
         return "Category 1"
     
     result = quantify_seasonality_strength(ts_df, freq=12)
-    seasonality_scores = ts_df.groupby("unique_id").apply(
-        lambda x: quantify_seasonality_strength(x, freq=12)
-    ).reset_index()
-
-    print(seasonality_scores)
-
     strength = result["strength_seasonality"]
 
     has_zeros = (y == 0).any()
@@ -108,7 +135,7 @@ def select_category(ts_df: pd.DataFrame) -> str:
 
     if strong_seasonality and has_zeros:
         return "Category 2"
-    elif strong_seasonality and not has_zeros:
+    elif strong_seasonality and (y > 0).all():
         return "Category 3"
     elif not strong_seasonality and has_zeros:
         return "Category 4"
@@ -211,124 +238,173 @@ def select_best_models(accuracy_df: pd.DataFrame) -> pd.DataFrame:
 def forecast_best_models(
     ts_df: pd.DataFrame,
     best_models_df: pd.DataFrame,
-    accuracy_df: pd.DataFrame,
     metric: str,
     horizon: int = 12,
     output_path: str = "final_forecasts.csv"
 ) -> pd.DataFrame:
     """
-    Forecasts using the best model for each time series, prints accuracy comparison,
-    and saves all forecasts to a single CSV.
-
-    Parameters:
-    - ts_df: Full original time series data with columns ['unique_id', 'ds', 'y'].
-    - best_models_df: DataFrame with ['unique_id', 'best_model', 'best_metric'].
-    - accuracy_df: DataFrame with model performance per series.
-    - horizon: Forecast horizon (default=12).
-    - output_path: File path for the CSV output.
+    Forecasts using the best model for each time series.
+    Saves forecasts to CSV and returns the DataFrame with standardized format.
     """
-
     all_forecasts = []
 
-    for _, row in best_models_df.iterrows():
-        series_id = row['unique_id']
-        best_model = row['best_model']
-        best_score = row['best_metric']
+    # Create a lookup dict for best model per unique_id
+    best_models_lookup = best_models_df.set_index('unique_id')['best_model'].to_dict()
 
-        # Catch KeyError if Naive wasn't used for this series
-        try:
-            naive_score = accuracy_df.loc[series_id, 'Naive']
-        except KeyError:
-            naive_score = None
+    for unique_id, group_df in ts_df.groupby("unique_id"):
+        model_name = best_models_lookup[unique_id]
+        model = model_registry.get(model_name)
 
-        # Filter series
-        series_df = ts_df[ts_df['unique_id'] == series_id].copy()
+        print(f"\nForecasting for {unique_id} using model: {model_name}")
 
-        # Build and run model
-        model = model_registry[best_model]
         sf = StatsForecast(models=[model], freq='MS')
 
-        forecast_df = sf.forecast(df=series_df[['unique_id', 'ds', 'y']], h=horizon)
+        # Forecast
+        forecast_df = sf.forecast(df=group_df, h=horizon)
 
-        forecast_df = forecast_df.rename(columns={
-            best_model: f"forecast_{series_id}_{best_model}"
-        })
-
-        # Print info
-        print(f"\nTime Series: {series_id}")
-        print(f"  → Chosen Model: {best_model}")
-        print(f"  → {metric.upper()}: {best_score:.4f}")
-        if naive_score is not None:
-            print(f"  → Naive {metric.upper()}: {naive_score:.4f}")
-        else:
-            print(f"  → Naive {metric.upper()}: not available (model not evaluated)")
+        forecast_df['unique_id'] = unique_id
+        forecast_df['model'] = model_name
 
         all_forecasts.append(forecast_df)
 
-    final_df = pd.concat(all_forecasts, axis=0)
-    final_df.to_csv(output_path, index=False)
-    print(f"\n✅ Forecasts saved to: {output_path}")
+    if all_forecasts:
+        final_forecast_df = pd.concat(all_forecasts, ignore_index=True)
+        final_forecast_df.to_csv(output_path, index=False)
+        return final_forecast_df
+    else:
+        print("No forecasts generated.")
+        return pd.DataFrame()
 
-    return final_df
+
+def plot_forecasts(ts_df, forecast_df, best_models_df, metric, plot_dir="plots"):
+    import os
+    import matplotlib.pyplot as plt
+
+    os.makedirs(plot_dir, exist_ok=True)
+
+    for _, row in best_models_df.iterrows():
+        series_id = row["unique_id"]
+        best_model = row["best_model"]
+        best_score = row.get("best_metric", None)
+
+        # Historical data
+        history = ts_df[ts_df["unique_id"] == series_id]
+
+        # Forecasts for this series and model
+        model_forecast = forecast_df[
+            (forecast_df["unique_id"] == series_id) & 
+            (forecast_df["model"] == best_model)
+        ]
+        naive_forecast = forecast_df[
+            (forecast_df["unique_id"] == series_id) & 
+            (forecast_df["model"] == "Naive")
+        ]
+
+        if model_forecast.empty:
+            print(f"⚠️ No forecast available for {series_id} with model {best_model}")
+            continue
+
+        # Identify forecast column (exclude known columns)
+        forecast_col = [col for col in model_forecast.columns if col not in ['unique_id', 'ds', 'model']][0]
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(history["ds"], history["y"], label="Actuals", marker='o')
+        plt.plot(model_forecast["ds"], model_forecast[forecast_col], label=f"{best_model} Forecast", linestyle="--", marker='x', color="blue")
+
+        if not naive_forecast.empty:
+            naive_col = [col for col in naive_forecast.columns if col not in ['unique_id', 'ds', 'model']][0]
+            plt.plot(naive_forecast["ds"], naive_forecast[naive_col], label="Naive Forecast", linestyle=":", marker='s', color="orange")
+        else:
+            print(f"⚠️ No naive forecast available for {series_id}")
+
+        title = f"{series_id} Forecast ({best_model})"
+        if best_score is not None:
+            title += f"\n{metric.upper()}: {best_score:.2f}"
+
+        plt.title(title)
+        plt.xlabel("Date")
+        plt.ylabel("Sales")
+        plt.legend()
+        plt.grid(True)
+
+        filename = os.path.join(plot_dir, f"forecast_{series_id}_{best_model}.png")
+        plt.savefig(filename, bbox_inches="tight")
+        plt.close()
+        print(f"📊 Saved forecast plot to {filename}")
+
+
+def create_summary_table(ts_df, best_models_df, accuracy_df):
+    # Get category per series
+    categories = ts_df.groupby("unique_id").apply(select_category).rename("category")
+
+    # Get number of observations per series
+    counts = ts_df.groupby("unique_id").size().rename("num_observations")
+
+    # Extract naive accuracy from accuracy_df
+    # accuracy_df has index unique_id and columns = model names
+    naive_acc = accuracy_df['Naive'].rename("naive_metric")
+
+    # Merge all info
+    summary_df = best_models_df.set_index('unique_id').join([categories, counts, naive_acc])
+
+    # Rename columns for clarity
+    summary_df = summary_df.rename(columns={
+        'best_model': 'best_model_chosen',
+        'best_metric': 'best_model_metric_value'
+    })
+
+    # Reset index to have unique_id as a column if desired
+    summary_df = summary_df.reset_index()
+
+    return summary_df
+
 
 #--------------------------------------------------------
 
-model_registry = {
-    "Naive": Naive(),
-    "RandomWalkWithDrift": RandomWalkWithDrift(),
-    "AutoARIMA": AutoARIMA(),
-    "AutoETS": AutoETS(),
-    "SeasonalNaive": SeasonalNaive(season_length=12),
-    "HistoricAverage": HistoricAverage(),
-}
+if __name__ == "__main__":
+    # Step 1: Get user input
+    file_name, product_classes_to_forecast, metric = get_user_inputs()
+    print(f"\nInputs received:\nFile: {file_name}\nProduct Classes to Forecast: {product_classes_to_forecast}\nMetric: {metric}")
 
-categories = {
-    'Category 1': ["Naive", "RandomWalkWithDrift"],
-    'Category 2': ["Naive", "SeasonalNaive", "AutoETS"],
-    'Category 3': ["Naive", "AutoARIMA", "SeasonalNaive", "AutoETS"],
-    'Category 4': ["Naive", "AutoARIMA", "RandomWalkWithDrift", "HistoricAverage"],
-    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"]
-}
-#--------------------------------------------------------
+    # Step 2: Load time series
+    ts_df = load_selected_timeseries(file_name, product_classes_to_forecast)
+    if ts_df.empty:
+        print("❌ No time series found for the selected product classes.")
+        exit(1)
+    print("✅ Loaded time series:\n", ts_df.head(), "\n")
 
-file_name, product_classes_to_forecast, metric = get_user_inputs()
-print(f"\nInputs received:\nFile: {file_name}\nProduct Classes to Forecast: {product_classes_to_forecast}\nMetric: {metric}")
+    #print(ts_df.groupby('unique_id').get_group('C3029'))
 
-ts_df = load_selected_timeseries(file_name, product_classes_to_forecast)
-print("Loaded timeseries:\nS", ts_df.head(), "\n")
+    # Step 3: Minimum series length
+    ts_min_length = ts_df.groupby("unique_id").size().min()
+    if ts_min_length < 48: # Get length of shortest time series
+        print("Shortest time series length:", ts_min_length)
+    else:
+        ts_min_length = 48  # force to minimum if needed
 
-# Get length of shortest time series
-ts_min_length = ts_df.groupby("unique_id").size().min()
-if ts_min_length < 48:
-    print("Shortest time series length:", ts_min_length)
-else:
-    ts_min_length == 48
+    # Step 4: Cross-validation
+    cv_results = run_cross_validation(ts_df, metric, ts_min_length)
+    if cv_results.empty:
+        print("⚠️ No valid time series for cross-validation.")
+        exit(1)
 
-# Run cross validation and calculate accuracy metrics
-cv_results = run_cross_validation(ts_df, metric, ts_min_length)
-print(cv_results)
-
-# Print accuracy metrics
-if not cv_results.empty:
+    # Step 5: Accuracy calculation
     accuracy_df = calculate_accuracy_metrics(cv_results, metric)
-    print("Per-Series, Per-Model Accuracy:")
-    print("Accuracy:\n")
-    print(accuracy_df)
-else:
-    print("\nNo valid time series for cross-validation.")
+    accuracy_df = accuracy_df.set_index("unique_id")
+    print("📈 Per-Series, Per-Model Accuracy:\n", accuracy_df)
 
-# Optional: To get average accuracy across all series per model
-#avg_accuracy = accuracy_df.mean(numeric_only=True).to_frame(name=metric.upper())
-#avg_accuracy.index.name = 'model'
-#avg_accuracy.reset_index(inplace=True)
-#print("\nAverage accuracy across all series:")
-#print(avg_accuracy)
+    # Step 6: Best model selection
+    best_models_df = select_best_models(accuracy_df)
+    print("🏆 Best models selected:\n", best_models_df)
 
-# Select best models:
-accuracy_df = accuracy_df.set_index("unique_id") # set unique_id as index
-best_models_df = select_best_models(accuracy_df)
+    # Step 7: Forecasts (best models + Naive)
+    forecast_df = forecast_best_models(
+        ts_df, best_models_df, metric=metric, horizon=12
+    )
 
-# Run forecast for best models:
-forecast_df = forecast_best_models(ts_df, best_models_df, accuracy_df, metric=metric, horizon=12)
+    summary_df = create_summary_table(ts_df, best_models_df, accuracy_df)
+    print("\nSummary Table:")
+    print(summary_df)
 
-
+    # Step 8: Plot forecasts
+    # plot_forecasts(ts_df, forecast_df, best_models_df, accuracy_df, metric)
