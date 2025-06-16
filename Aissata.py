@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import utilsforecast.losses as ufl #?
 import os # To create directory with plots
+import warnings
 import matplotlib.pyplot as plt
 from statsmodels.tsa.seasonal import STL
 from statsforecast import StatsForecast
@@ -17,8 +18,8 @@ from statsforecast.models import (
 from plot_forecasting import run_all_plots # Plotting script
 
 model_registry = {
-    "ARIMA": AutoARIMA(),
-    "ETS": AutoETS(),
+    "AutoARIMA": AutoARIMA(),
+    "AutoETS": AutoETS(),
     "HistoricAverage": HistoricAverage(),
     "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"),
     "Naive": Naive(),
@@ -28,12 +29,11 @@ model_registry = {
 
 categories = {
     'Category 1': ["Naive", "RandomWalkWithDrift"],
-    'Category 2': ["Naive", "SeasonalNaive", "ETS"],
-    'Category 3': ["Naive", "SARIMA", "SeasonalNaive", "ETS"],
-    'Category 4': ["Naive", "ARIMA", "RandomWalkWithDrift", "HistoricAverage"],
-    'Category 5': ["Naive", "ARIMA", "HistoricAverage"]
+    'Category 2': ["Naive", "SeasonalNaive", "AutoETS"],
+    'Category 3': ["Naive", "SARIMA", "SeasonalNaive", "AutoETS"],
+    'Category 4': ["Naive", "AutoARIMA", "RandomWalkWithDrift", "HistoricAverage"],
+    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"]
 }
-
 
 #--------------------------------------------------------
 
@@ -87,7 +87,7 @@ def load_selected_timeseries(file_name: str, product_classes: list[str]) -> pd.D
     return formatted_df
 
 
-def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12, threshold: float = 0.5) -> pd.Series:
+def quantify_seasonality_strength(ts_df: pd.DataFrame, freq: int = 12) -> pd.Series:
     """
     Quantifies the strength of seasonality and residual variability in a time series.
 
@@ -131,13 +131,14 @@ def select_category(ts_df: pd.DataFrame) -> str:
     strength = result["strength_seasonality"]
 
     has_zeros = (y == 0).any()
-    strong_seasonality = strength >= 0.5
+    strong_seasonality = strength >= 0.64
+    low_seasonality = strength < 0.4
 
     if strong_seasonality and has_zeros:
         return "Category 2"
     elif strong_seasonality and (y > 0).all():
         return "Category 3"
-    elif not strong_seasonality and has_zeros:
+    elif low_seasonality and has_zeros:
         return "Category 4"
     else:
         return "Category 5"
@@ -243,7 +244,7 @@ def forecast_best_models(
     output_path: str = "final_forecasts.csv"
 ) -> pd.DataFrame:
     """
-    Forecasts using the best model for each time series.
+    Forecasts using the best model and a naive benchmark for each time series.
     Saves forecasts to CSV and returns the DataFrame with standardized format.
     """
     all_forecasts = []
@@ -252,24 +253,39 @@ def forecast_best_models(
     best_models_lookup = best_models_df.set_index('unique_id')['best_model'].to_dict()
 
     for unique_id, group_df in ts_df.groupby("unique_id"):
+        group_df = group_df.sort_values("ds")
+
+        # Forecast using the best model
         model_name = best_models_lookup[unique_id]
         model = model_registry.get(model_name)
 
         print(f"\nForecasting for {unique_id} using model: {model_name}")
-
         sf = StatsForecast(models=[model], freq='MS')
+        best_forecast = sf.forecast(df=group_df, h=horizon)
+        print(best_forecast.head())
 
-        # Forecast
-        forecast_df = sf.forecast(df=group_df, h=horizon)
+        # Rename forecast column to 'y_hat'
+        best_col = [col for col in best_forecast.columns if col not in ['ds', 'unique_id']][0]
+        best_forecast = best_forecast.rename(columns={best_col: 'y_hat'})
+        best_forecast['unique_id'] = unique_id
+        best_forecast['model'] = model_name
+        all_forecasts.append(best_forecast)
 
-        forecast_df['unique_id'] = unique_id
-        forecast_df['model'] = model_name
+        # Forecast using Naive model
+        if model_name != "Naive":
+            sf_naive = StatsForecast(models=[Naive()], freq='MS')
+            naive_forecast = sf_naive.forecast(df=group_df, h=horizon)
 
-        all_forecasts.append(forecast_df)
+            naive_col = [col for col in naive_forecast.columns if col not in ['ds', 'unique_id']][0]
+            naive_forecast = naive_forecast.rename(columns={naive_col: 'y_hat'})
+            naive_forecast['unique_id'] = unique_id
+            naive_forecast['model'] = 'Naive'
+            all_forecasts.append(naive_forecast)
 
     if all_forecasts:
         final_forecast_df = pd.concat(all_forecasts, ignore_index=True)
         final_forecast_df.to_csv(output_path, index=False)
+        print("final forecast ok.")
         return final_forecast_df
     else:
         print("No forecasts generated.")
@@ -277,9 +293,6 @@ def forecast_best_models(
 
 
 def plot_forecasts(ts_df, forecast_df, best_models_df, metric, plot_dir="plots"):
-    import os
-    import matplotlib.pyplot as plt
-
     os.makedirs(plot_dir, exist_ok=True)
 
     for _, row in best_models_df.iterrows():
@@ -290,32 +303,34 @@ def plot_forecasts(ts_df, forecast_df, best_models_df, metric, plot_dir="plots")
         # Historical data
         history = ts_df[ts_df["unique_id"] == series_id]
 
-        # Forecasts for this series and model
+        # Forecasts for this series and best model
         model_forecast = forecast_df[
             (forecast_df["unique_id"] == series_id) & 
             (forecast_df["model"] == best_model)
         ]
-        naive_forecast = forecast_df[
-            (forecast_df["unique_id"] == series_id) & 
-            (forecast_df["model"] == "Naive")
-        ]
+
+        # Forecasts for naive model, only if it's NOT the best model
+        if best_model != "Naive":
+            naive_forecast = forecast_df[
+                (forecast_df["unique_id"] == series_id) & 
+                (forecast_df["model"] == "Naive")
+            ]
+        else:
+            naive_forecast = pd.DataFrame()  # empty, so it won't be plotted again
 
         if model_forecast.empty:
             print(f"⚠️ No forecast available for {series_id} with model {best_model}")
             continue
 
-        # Identify forecast column (exclude known columns)
-        forecast_col = [col for col in model_forecast.columns if col not in ['unique_id', 'ds', 'model']][0]
-
         plt.figure(figsize=(10, 5))
         plt.plot(history["ds"], history["y"], label="Actuals", marker='o')
-        plt.plot(model_forecast["ds"], model_forecast[forecast_col], label=f"{best_model} Forecast", linestyle="--", marker='x', color="blue")
+        plt.plot(model_forecast["ds"], model_forecast["y_hat"], 
+                 label=f"{best_model} Forecast", linestyle="--", marker='x', color="blue")
 
+        # Plot naive forecast if it's not already the best
         if not naive_forecast.empty:
-            naive_col = [col for col in naive_forecast.columns if col not in ['unique_id', 'ds', 'model']][0]
-            plt.plot(naive_forecast["ds"], naive_forecast[naive_col], label="Naive Forecast", linestyle=":", marker='s', color="orange")
-        else:
-            print(f"⚠️ No naive forecast available for {series_id}")
+            plt.plot(naive_forecast["ds"], naive_forecast["y_hat"], 
+                     label="Naive Forecast", linestyle=":", marker='s', color="orange")
 
         title = f"{series_id} Forecast ({best_model})"
         if best_score is not None:
@@ -335,7 +350,7 @@ def plot_forecasts(ts_df, forecast_df, best_models_df, metric, plot_dir="plots")
 
 def create_summary_table(ts_df, best_models_df, accuracy_df):
     # Get category per series
-    categories = ts_df.groupby("unique_id").apply(select_category).rename("category")
+    category_assignments = ts_df.groupby("unique_id").apply(select_category).rename("category")
 
     # Get number of observations per series
     counts = ts_df.groupby("unique_id").size().rename("num_observations")
@@ -345,7 +360,7 @@ def create_summary_table(ts_df, best_models_df, accuracy_df):
     naive_acc = accuracy_df['Naive'].rename("naive_metric")
 
     # Merge all info
-    summary_df = best_models_df.set_index('unique_id').join([categories, counts, naive_acc])
+    summary_df = best_models_df.set_index('unique_id').join([category_assignments, counts, naive_acc])
 
     # Rename columns for clarity
     summary_df = summary_df.rename(columns={
@@ -407,4 +422,4 @@ if __name__ == "__main__":
     print(summary_df)
 
     # Step 8: Plot forecasts
-    # plot_forecasts(ts_df, forecast_df, best_models_df, accuracy_df, metric)
+    plot_forecasts(ts_df, forecast_df, best_models_df, metric)
