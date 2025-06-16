@@ -15,25 +15,27 @@ from statsforecast.models import (
     SeasonalNaive
 )
 
+#-------------------Input Data-----------------------------------
+
 model_registry = {
-    "AutoARIMA": AutoARIMA(),
-    "AutoETS": AutoETS(),
-    "HistoricAverage": HistoricAverage(),
-    "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"),
-    "Naive": Naive(),
-    "RandomWalkWithDrift": RandomWalkWithDrift(),
-    "SeasonalNaive": SeasonalNaive(season_length=12),
+    "AutoARIMA": AutoARIMA(), # Can handle seasonality, some types of trends and autoregression. If high seasonality, SARIMA should be used instead.
+    "AutoETS": AutoETS(), # Handles seasonality and trends well. Not good with intermittent demand (e.g., lots of zeros), doesn't handle exogenous variables, and can struggle with highly non-linear series.
+    "HistoricAverage": HistoricAverage(), # ideal for Time series with no trend, no seasonality. The mean model is however highly sensitive to outliers.
+    "SARIMA": AutoARIMA(season_length=12, alias="SARIMA"), # To be used if there is high seasonality.
+    "Naive": Naive(), # Can be used for time series without seasonality and trend.
+    "RandomWalkWithDrift": RandomWalkWithDrift(), # Ideal to model linear trends, but not seasonality. Sensitive to training window, i.e. chosen first and last observation.
+    "SeasonalNaive": SeasonalNaive(season_length=12), # Applicable if high seasonality and no trend. Replicate last value in previous season, so highly sensitive to outliers.
 }
 
 categories = {
-    'Category 1': ["Naive", "RandomWalkWithDrift"],
-    'Category 2': ["Naive", "SeasonalNaive", "AutoETS"],
-    'Category 3': ["Naive", "SARIMA", "SeasonalNaive", "AutoETS"],
-    'Category 4': ["Naive", "AutoARIMA", "RandomWalkWithDrift", "HistoricAverage"],
-    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"]
+    'Category 1': ["Naive", "RandomWalkWithDrift"], # Short time series (under 48 observations)
+    'Category 2': ["Naive", "SeasonalNaive", "AutoETS"], # High seasonality and contains zeroes
+    'Category 3': ["Naive", "SARIMA", "SeasonalNaive", "AutoETS"], # High seasonality and contains ony positive values
+    'Category 4': ["Naive", "AutoARIMA", "RandomWalkWithDrift", "HistoricAverage"], # Low or no seasonality and contains zeroes.
+    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"] # All remaining
 }
 
-#--------------------------------------------------------
+#---------------------Functions-----------------------------------
 
 def get_user_inputs():
     # Get file name
@@ -372,7 +374,7 @@ def create_summary_table(ts_df, best_models_df, accuracy_df):
     return summary_df
 
 
-#--------------------------------------------------------
+#------------------Main script--------------------------------------
 
 if __name__ == "__main__":
     # Step 1: Get user input
