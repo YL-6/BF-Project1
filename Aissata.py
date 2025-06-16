@@ -5,13 +5,12 @@ import utilsforecast.losses as ufl
 
 from statsforecast import StatsForecast
 from statsforecast.models import (
+    AutoARIMA,
+    AutoETS,
+    HistoricAverage,
     Naive,
     RandomWalkWithDrift,
-    #ETS,
-    SeasonalNaive,
-    #TSLM,
-    AutoARIMA,
-    HistoricAverage
+    SeasonalNaive
 )
 from statsmodels.tsa.seasonal import seasonal_decompose
 
@@ -268,18 +267,17 @@ model_registry = {
     "Naive": Naive(),
     "RandomWalkWithDrift": RandomWalkWithDrift(),
     "AutoARIMA": AutoARIMA(),
-    #"ETS": ETS(),
+    "AutoETS": AutoETS(),
     "SeasonalNaive": SeasonalNaive(season_length=12),
     "HistoricAverage": HistoricAverage(),
-    #"TSLM": TSLM() --should not be used
 }
 
 categories = {
     'Category 1': ["Naive", "RandomWalkWithDrift"],
-    'Category 2': ["Naive", "SeasonalNaive"], #+ , "TSLM", "ETS"
-    'Category 3': ["Naive", "AutoARIMA", "SeasonalNaive"], #+  "ETS", 
+    'Category 2': ["Naive", "SeasonalNaive", "AutoETS"],
+    'Category 3': ["Naive", "AutoARIMA", "SeasonalNaive", "AutoETS"],
     'Category 4': ["Naive", "AutoARIMA", "RandomWalkWithDrift", "HistoricAverage"],
-    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"] #+ , "TSLM"
+    'Category 5': ["Naive", "AutoARIMA", "HistoricAverage"]
 }
 #--------------------------------------------------------
 
